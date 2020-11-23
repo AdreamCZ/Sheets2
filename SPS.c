@@ -31,26 +31,83 @@ typedef struct Tables{
     Row *rows;
 }Table;
 
+
+void delChars(char *str,int from, int length) // Z libovolné pozice řetezce smaže několik znaků
+{
+   
+  if((unsigned)(length+from) <= strlen(str))
+  {
+    for(int i = 0; i < length ; i++){
+        memmove(&str[from],&str[from+1],strlen(str)-from);
+    }
+  }else{
+      printf("KURVA CHCEŠ TOHO MOC\n"); //DEBUG
+  }
+}
+
+
 bool isDel(char *str,int pos, char *del){ //Kontroluje zda-li je znak na pozici pos řetezce str oddělovač
     if(strchr(del,str[pos]) != 0){
         if( pos == 0 || str[pos-1] != '\\' ){ //Pokud oddělovač není uvozen zpětným lomítkem
+            char *strD = strdup(str); //Nutná deuplikace protože budu mazat části
+            int cnt = 0;
+            while(strchr(strD,'\"') != NULL){ // TODO FIX pokud jsou více jak 2 uvozovky -> nekonečný cyklus
+                int parPos = strchr(str,'\"') - str;
+                if(parPos < pos ){  //Někde před oddělovačem je uvozovka
+                    delChars(strD,0,parPos + 1); //V strD zůstane jen část řetězce za uvozovkou 
+                    if(strchr(strD,'\"') != NULL){
+                        int par2Pos = strchr(strD,'\"') - strD;
+                        delChars(strD,0,par2Pos + 1);
+                        if(par2Pos > pos){
+                            return false;
+                        }
+                    }
+                }else{
+                    break;
+                }
+                cnt++;
+                if(cnt > 5){
+                    printf("strD %s\n",strD);
+                }
+            }
             return true;
+            
+
         }
     }
     return false;
 }
 
+void freeTable(Table *tab){ //Uvolní pamět allokovanou pro tabulku //TODO somehow test dis
+    for(int r = 0; r < tab->length;r++){
+        for(int c = 0; c < tab->rows[r].length;c++){
+            free(tab->rows[r].cols[c].chars);
+        }
+    }
+    free(tab);
+}
+
 void printTable(Table *table, char *del){ //Vytiskne na výstup jeden řádek tabulky
-  //  printf("tisknu pičo\n");
+    printf("tisknu pičo tab len%d\n",table->length);
+    printf("row 2 len %d\n",table->rows[1].length);
     if(table->length > 0){
         for(int r = 0; r < table->length;r++){ // 
+    //    printf("r %d\n",r);
+           // printf("#%d cc%d",r,table->rows[r].length);
             for(int c = 0; c < table->rows[r].length; c++){ // 
                 printf("(Cl#%d)",table->rows[r].cols[c].length);
+                bool hasSpecial = false;
+                if(strchr(table->rows[r].cols[c].chars,'\\') != NULL){
+                    putc('\"',stdout);
+                    hasSpecial = true;
+                }
                 for(int s = 0; s < table->rows[r].cols[c].length;s++){
-                    
                     if(table->rows[r].cols[c].chars[s] != '\\'){
                         printf("%c",table->rows[r].cols[c].chars[s]);
                     }
+                }
+                if(hasSpecial){
+                    putc('\"',stdout);
                 }
                 if( c < table->rows[r].length - 1){
                     printf("%c",del[0]);
@@ -64,19 +121,6 @@ void printTable(Table *table, char *del){ //Vytiskne na výstup jeden řádek ta
     }
 }
 
-void delChars(char *str,int from, int length) // Z libovolné pozice řetezce smaže několik znaků
-{
-   
-  if((unsigned)(length+from) <= strlen(str))
-  {
-    for(int i = 0; i < length ; i++){
-        memmove(&str[from],&str[from+1],strlen(&str)-from);
-    }
-  }else{
-      printf("KURVA CHCEŠ TOHO MOC\n"); //DEBUG
-  }
-}
-
 
 Row loadRow(char *rowStr, char *del){
  //   printf("load Row from : %s\n",rowStr);
@@ -85,18 +129,23 @@ Row loadRow(char *rowStr, char *del){
     row.length = 0;
     row.cols = malloc(sizeof(Col));
     int colCounter = 0;
-    int shift = 0;
-    for(int i = 0; rowStr[i] != '\0';i++){
+    for(int i = 0; rowStr[i] != '\0';i++){ 
         if(isDel(rowStr,i,del)){ //Znak je delimiter -> jdu uložit buňku před ním 
-            //if((colCounter % BASE_COL_COUNT == 0) && colCounter > 0){
-            row.cols = realloc(row.cols, sizeof(Col) * (colCounter+1));
+            Col *np = realloc(row.cols, sizeof(Col) * (colCounter + 1)); //TODO Přidat kontroly
+            if(np == NULL){
+                perror("Error");
+                row.length = -1;
+                return row;
+            }else{
+                row.cols = np;
+            }
             Col col;
             col.chars=malloc(sizeof(char) * i + 1);
             col.length = i;
             strncpy(col.chars,rowStr,i);
-       //     printf("#%d : %s\n",colCounter,col.chars);
+            col.chars[i] = '\0';
             delChars(rowStr,0,i+1);
-            row.cols[colCounter] = col;
+            row.cols[colCounter] = col; //Vložení vytvořené buňky do řádku
             colCounter++;
             row.length++;
             i = 0;
@@ -104,81 +153,26 @@ Row loadRow(char *rowStr, char *del){
         }
     }
 
-    row.cols = realloc(row.cols, sizeof(Col) * (colCounter + 1)); //TODO Přidat kontroly
+    Col *np = realloc(row.cols, sizeof(Col) * (colCounter + 1)); //TODO Přidat kontroly
+    if(np == NULL){
+        free(row.cols);
+        perror("Error");
+        row.length = -1;
+        return row;
+    }else{
+        row.cols = np;
+    }
 
+    //Uložení poslední buňky
     row.cols[colCounter].chars = malloc( (strlen(rowStr) + 1 ) * sizeof(char));
     strncpy(row.cols[colCounter].chars,rowStr,strlen(rowStr));
     row.cols[colCounter].length = strlen(rowStr);
     row.length++;
-    //Uložit poslední buňku
-
-    /*
-    row.length = 0;
-    row.cols = malloc(sizeof(Col) * BASE_ROW_SIZE);
-    //row.cols[0].chars = (char*) malloc(sizeof(char) * BASE_COL_SIZE);
-    int count = 0; //Současná pozice v celém řádku
-    int inColCount = 0; //Současná pozice v právě zpracovávaném sloupci
-    int col = 0;   //Číslo právě zpracovávaného sloupce 
-    for(int i=0; rowStr[i] != '\0';i++){
-        char z = rowStr[i];
-        if(z == '\t' || z == '\r' || z == '\f'){
-            continue;
-        }
     
-        if(count % BASE_ROW_SIZE == 0){ //Zvětšení row.cols      //ZDE JE SEQFAULT / NĚJAKÁ CHYBA 
-            Col *np;
-            if(inColCount == 0 ){
-                np = realloc(row.cols,sizeof(Col) * BASE_ROW_SIZE * 2);
-            }else{
-                np = realloc(row.cols,sizeof(Col) * count);
-            } 
-            printf("realloc done\n");
-            if(np == NULL){  
-                perror("Error : not enough memory"); //Nešlo alokovat
-                row.length = -1;
-                return row;
-            }else{
-                row.cols = np;
-            }
-        }
-        if(inColCount % BASE_COL_SIZE == 0){ //zvětšní buňky
-            char *np;
-            if(inColCount == 0 ){
-                np = realloc(row.cols[col].chars,sizeof(char) * BASE_COL_SIZE * 2);
-            }else{
-                np = realloc(row.cols[col].chars,sizeof(char) * inColCount);
-            }   
-
-            if(np == NULL){
-                perror("Error : not enough memory"); //Nešlo alokovat
-                row.cols[col].length = -1;
-                return row;
-            }else{
-                row.cols[col].chars = np;
-            }
-        }
-        if(strchr(del,z) != NULL || (z=='\n' && count > 1) ){ //Znak je delimiter
-            row.cols[col].length = inColCount;
-            row.cols[col].chars[inColCount] = '\0';
-            col++;
-            inColCount = 0;
-            //printf("col : %s\n",row.cols[col - 1].chars);
-            continue;
-        }
-
-        row.cols[col].chars[inColCount] = z; //Zapsání
-        inColCount++;
-        count++;
-        
-    }
-    row.length = col;
-    //printf("len : %d colCount : %d\n", row.length,row.cols->length);
-    //printf("loadRow done %s \n",row.cols[row.length - 1].chars);*/
-
     return row;
 }
 
-void encodeStr(char *str, char *del){ 
+void encodeStr(char *str, char *del){ //TODO Mezi uvozovkami je delimiter tak se nemá brát v potaz
     // Pro všechny buňky provede : 
     // Smaže uvozovky na začátku a konci  
     int rLoc = -1;
@@ -231,32 +225,27 @@ Table loadTable(char *url,char *del){
 
         while(rowStr[strlen(rowStr) - 1] != '\n' &&  feof(fp)==0){ //rowStr není dost velká pro načtení celého řádku
             //Zvětšení paměti pro řádek
-         //   printf("wjile stgart\n");
-            
-            char *str2 = malloc(sizeof(char) * BASE_ROW_SIZE);
-            fgets(str2,BASE_ROWSTR_SIZE,fp);
-         //   printf("realloc for rowS\n");
-         //   printf("Bylo rowStr reallocCount%d realokováno %d bytů\n",reallocCount,reallocCount * sizeof(char) * BASE_ROWSTR_SIZE);
+            char *str2 = malloc(sizeof(char) * BASE_ROWSTR_SIZE);
+            fgets(str2,BASE_ROWSTR_SIZE,fp); //Přečte zbytek řádku
             char *np = realloc(rowStr, reallocCount * sizeof(char) * BASE_ROWSTR_SIZE);
             reallocCount++;
             if(np == NULL){
+                free(rowStr);
                 perror("Error");
                 table.length = -1;
                 return table;
             }else{
                 rowStr = np;
-            //    printf("Bylo zapsáno %d bytů celkme %d bytů\n",sizeof(str2),sizeof(rowStr) + sizeof(str2) + 1);
-            //    printf("bf strcat %s\n",rowStr);
                 strcat(rowStr,str2);
-             //   printf("AFTER STRCAT l%d %s\n",sizeof(rowStr),rowStr);
             }
             free(str2);
-         //   printf("tr\n"); 
-          //  printf("whileend\n");
         }
-   //     printf("Out of tableRealloc : %s\n",rowStr);
-        encodeStr(rowStr,del);
- //       printf("load row\n");
+  //      encodeStr(rowStr,del);
+        for(int i = 0; rowStr[i] != '\0'; i++){ //Vymže znaky, které by mohli později způsobovat problémy
+            if(rowStr[i] == '\n' || rowStr[i] == '\r' || rowStr[i] == '\t'){
+                delChars(rowStr,i,1);
+            }
+        }
         Row row = loadRow(rowStr,del);  
         if(row.length == -1){
             table.length = -1;
@@ -289,8 +278,30 @@ Table loadTable(char *url,char *del){
             }
             printf("\n");
         }*/
-
+    printf("retrun table\n");
     return table;
+}
+
+void alignCols(Table *table){
+    int maxCols = 0;
+    for(int i = 0; i < table->length;i++){
+        maxCols = table->rows[i].length > maxCols ? table->rows[i].length : maxCols; //Zjistí kolik sloupců má nejdelší řádek
+    }
+    printf("maxCols %d\n",maxCols);
+    for(int r = 0; r < table->length;r++){
+        if(table->rows[r].length < maxCols){
+            table->rows[r].cols = realloc(table->rows[r].cols, (maxCols+1) * sizeof(Col)); //TODO Kontroly maxCols -1 ?
+            for(int c = table->rows[r].length;c < maxCols;c++){    
+                table->rows[r].cols[c].length = 0;
+                table->rows[r].cols[c].chars = malloc( sizeof(char) );
+                table->rows[r].cols[c].chars[0] = '\0';
+
+            }
+            table->rows[r].length = maxCols;
+            
+        }
+    }
+    printf("done align\n");
 }
 
 
@@ -310,7 +321,9 @@ int main(int argc,char *argv[]){
 
     if(argc>=2){
         Table table = loadTable(argv[1],del);
-        //Zarovnat na stejný počet sloupců
+        alignCols(&table);
+        printf("After len %d\n",table.rows[1].length);
+        
         /*
         for(int r = 0; r < table.length;r++){
             printf("r#%d:",r);  
@@ -319,9 +332,12 @@ int main(int argc,char *argv[]){
             }
             printf("\n");   
         }*/
-        printf("r 3 c 5 %s\n",table.rows[2].cols[4].chars);
+      
         if(table.length != -1){
             printTable(&table,del);
+        }else{
+            freeTable(&table);
+            return 1;
         }
     }
     return 0;
